@@ -28,6 +28,7 @@ from pathlib import Path
 import hashlib
 import io
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
@@ -64,7 +65,38 @@ config = Config()
 
 # ==================== INITIALIZATION ====================
 
-app = FastAPI(title="RAG Backend API", version="1.0.0")
+# Global variables for lazy loading
+embedder = None
+text_splitter = None
+pc = None
+index = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager - loads models after server starts"""
+    global embedder, text_splitter, pc, index
+    
+    # Startup: Initialize models in background
+    logger.info("Server started, initializing models in background...")
+    try:
+        embedder = SentenceTransformer(config.EMBEDDING_MODEL)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=config.CHUNK_SIZE,
+            chunk_overlap=config.CHUNK_OVERLAP,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        pc = Pinecone(api_key=config.PINECONE_API_KEY)
+        index = pc.Index("documents-index")
+        logger.info("✅ Models initialized successfully!")
+    except Exception as e:
+        logger.error(f"❌ Model initialization failed: {str(e)}")
+    
+    yield
+    
+    # Shutdown: cleanup if needed
+    logger.info("Shutting down...")
+
+app = FastAPI(title="RAG Backend API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,32 +105,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Global variables for lazy loading
-embedder = None
-text_splitter = None
-pc = None
-index = None
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize models on startup"""
-    global embedder, text_splitter, pc, index
-    logger.info("Initializing models...")
-    
-    # Initialize models
-    embedder = SentenceTransformer(config.EMBEDDING_MODEL)
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=config.CHUNK_SIZE,
-        chunk_overlap=config.CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""]
-    )
-    
-    # Initialize Pinecone
-    pc = Pinecone(api_key=config.PINECONE_API_KEY)
-    index = pc.Index("documents-index")
-    
-    logger.info("Models initialized successfully!")
 
 # ==================== DATA MODELS ====================
 
