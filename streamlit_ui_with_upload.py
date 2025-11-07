@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # API Configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "https://accuracy-enhance-rag-tkr3.onrender.com"
 
 # Custom CSS (same as before)
 st.markdown("""
