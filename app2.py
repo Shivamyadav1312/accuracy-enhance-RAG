@@ -74,17 +74,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize models
-embedder = SentenceTransformer(config.EMBEDDING_MODEL)
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=config.CHUNK_SIZE,
-    chunk_overlap=config.CHUNK_OVERLAP,
-    separators=["\n\n", "\n", ". ", " ", ""]
-)
+# Global variables for lazy loading
+embedder = None
+text_splitter = None
+pc = None
+index = None
 
-# Initialize Pinecone
-pc = Pinecone(api_key=config.PINECONE_API_KEY)
-index = pc.Index("documents-index")
+@app.on_event("startup")
+async def startup_event():
+    """Initialize models on startup"""
+    global embedder, text_splitter, pc, index
+    logger.info("Initializing models...")
+    
+    # Initialize models
+    embedder = SentenceTransformer(config.EMBEDDING_MODEL)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=config.CHUNK_SIZE,
+        chunk_overlap=config.CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+    
+    # Initialize Pinecone
+    pc = Pinecone(api_key=config.PINECONE_API_KEY)
+    index = pc.Index("documents-index")
+    
+    logger.info("Models initialized successfully!")
 
 # ==================== DATA MODELS ====================
 
@@ -1016,18 +1030,11 @@ async def query_with_dual_answers(request: QueryRequest):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint - responds immediately"""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "services": {
-            "vector_db": "connected",
-            "llm_provider": config.LLM_PROVIDER,
-            "together_api": "configured" if config.TOGETHER_API_KEY else "missing",
-            "groq_api": "configured" if config.GROQ_API_KEY else "missing",
-            "serper_api": "configured" if config.SERPER_API_KEY else "missing"
-        },
-        "model": config.LLM_MODEL
+        "models_loaded": embedder is not None
     }
 
 @app.get("/")
