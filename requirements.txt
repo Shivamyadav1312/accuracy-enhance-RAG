@@ -15,7 +15,7 @@ langchain>=0.1.0
 langchain-text-splitters>=0.0.1
 
 # Vector Database
-pinecone-client>=3.0.0
+pinecone>=5.0.0
 
 # Document Processing
 PyPDF2>=3.0.0
