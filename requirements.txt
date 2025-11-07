@@ -1,0 +1,9 @@
+streamlit>=1.28.0
+requests>=2.31.0
+# Core OCR
+pytesseract>=0.3.10
+Pillow>=10.0.0
+pdf2image>=1.16.3
+
+# PDF processing (already in main requirements)
+PyPDF2>=3.0.0
