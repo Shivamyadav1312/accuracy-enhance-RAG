@@ -75,18 +75,27 @@ def initialize_models():
     """Initialize models in background thread"""
     global embedder, text_splitter, pc, index
     try:
-        logger.info("Loading models...")
+        logger.info("🔄 Loading sentence transformer model...")
         embedder = SentenceTransformer(config.EMBEDDING_MODEL)
+        logger.info("✅ Sentence transformer loaded")
+        
+        logger.info("🔄 Initializing text splitter...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
             chunk_overlap=config.CHUNK_OVERLAP,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
+        logger.info("✅ Text splitter initialized")
+        
+        logger.info("🔄 Connecting to Pinecone...")
         pc = Pinecone(api_key=config.PINECONE_API_KEY)
         index = pc.Index("documents-index")
-        logger.info("✅ Models initialized successfully!")
+        logger.info("✅ Pinecone connected")
+        
+        logger.info("🎉 All models initialized successfully!")
     except Exception as e:
         logger.error(f"❌ Model initialization failed: {str(e)}")
+        logger.exception("Full error traceback:")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1051,18 +1060,21 @@ async def health_check():
     }
 
 @app.get("/")
+@app.head("/")
 async def root():
-    """API information"""
+    """API information - supports both GET and HEAD requests"""
     return {
         "name": "RAG Backend API",
         "version": "1.0.0",
+        "status": "running",
+        "models_loaded": embedder is not None,
         "endpoints": {
+            "health": "GET /health - Health check",
             "upload": "POST /upload - Upload single document",
             "batch_upload": "POST /batch-upload - Upload multiple documents",
             "query": "POST /query - Query with RAG + web search",
             "stats": "GET /stats - Database statistics",
-            "domains": "GET /domains - List available domains",
-            "health": "GET /health - Health check"
+            "domains": "GET /domains - List available domains"
         }
     }
 
