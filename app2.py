@@ -49,7 +49,7 @@ class Config:
     SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
     
     # Model settings
-    EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+    EMBEDDING_MODEL = "paraphrase-MiniLM-L3-v2"  # Smaller, faster model
     LLM_MODEL = "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"  # Together AI model
     LLM_PROVIDER = "together"  # Options: "groq" or "together"
     
@@ -71,14 +71,19 @@ text_splitter = None
 pc = None
 index = None
 
-def initialize_models():
-    """Initialize models in background thread"""
-    global embedder, text_splitter, pc, index
-    try:
-        logger.info("🔄 Loading sentence transformer model...")
+def get_embedder():
+    """Lazy load embedder on first use"""
+    global embedder
+    if embedder is None:
+        logger.info("🔄 Loading sentence transformer model (lazy load)...")
         embedder = SentenceTransformer(config.EMBEDDING_MODEL)
         logger.info("✅ Sentence transformer loaded")
-        
+    return embedder
+
+def get_text_splitter():
+    """Lazy load text splitter on first use"""
+    global text_splitter
+    if text_splitter is None:
         logger.info("🔄 Initializing text splitter...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
@@ -86,38 +91,27 @@ def initialize_models():
             separators=["\n\n", "\n", ". ", " ", ""]
         )
         logger.info("✅ Text splitter initialized")
-        
-        # Only initialize Pinecone if API key is available
-        if config.PINECONE_API_KEY:
-            logger.info("🔄 Connecting to Pinecone...")
-            try:
-                pc = Pinecone(api_key=config.PINECONE_API_KEY)
-                index = pc.Index("documents-index")
-                logger.info("✅ Pinecone connected")
-            except Exception as e:
-                logger.error(f"⚠️ Pinecone connection failed: {str(e)}")
-                logger.info("Server will run without Pinecone (upload/query features disabled)")
-        else:
-            logger.warning("⚠️ PINECONE_API_KEY not set - upload/query features disabled")
-        
-        logger.info("🎉 All models initialized successfully!")
-    except Exception as e:
-        logger.error(f"❌ Model initialization failed: {str(e)}")
-        logger.exception("Full error traceback:")
+    return text_splitter
+
+def get_pinecone_index():
+    """Lazy load Pinecone on first use"""
+    global pc, index
+    if index is None and config.PINECONE_API_KEY:
+        logger.info("🔄 Connecting to Pinecone...")
+        try:
+            pc = Pinecone(api_key=config.PINECONE_API_KEY)
+            index = pc.Index("documents-index")
+            logger.info("✅ Pinecone connected")
+        except Exception as e:
+            logger.error(f"⚠️ Pinecone connection failed: {str(e)}")
+            raise HTTPException(status_code=503, detail="Vector database unavailable")
+    return index
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager - starts model loading in background"""
-    import threading
-    
-    # Start model loading in background thread (non-blocking)
-    logger.info("Server starting, will load models in background...")
-    thread = threading.Thread(target=initialize_models, daemon=True)
-    thread.start()
-    
+    """Lifespan context manager - server starts immediately"""
+    logger.info("✅ Backend fully started and ready to serve requests.")
     yield
-    
-    # Shutdown
     logger.info("Shutting down...")
 
 app = FastAPI(title="RAG Backend API", version="1.0.0", lifespan=lifespan)
@@ -252,12 +246,14 @@ def extract_text_from_file(file_content: bytes, filename: str, use_ocr: bool = T
 
 def chunk_and_embed(text: str, filename: str, domain: str, user_id: Optional[str] = None) -> List[Dict]:
     """Split text into chunks and create embeddings"""
-    chunks = text_splitter.split_text(text)
+    splitter = get_text_splitter()
+    chunks = splitter.split_text(text)
     logger.info(f"Created {len(chunks)} chunks from {filename}")
     
     vectors = []
+    model = get_embedder()
     for i, chunk in enumerate(chunks):
-        embedding = embedder.encode(chunk).tolist()
+        embedding = model.encode(chunk).tolist()
         doc_id = hashlib.md5(f"{user_id}_{filename}_{i}".encode()).hexdigest() if user_id else hashlib.md5(f"{filename}_{i}".encode()).hexdigest()
         
         metadata = {
@@ -295,11 +291,14 @@ def ingest_document(file_content: bytes, filename: str, domain: str, user_id: Op
     # Create chunks and embeddings with user_id
     vectors = chunk_and_embed(text, filename, domain, user_id)
     
+    # Get Pinecone index
+    idx = get_pinecone_index()
+    
     # Upload to Pinecone in batches
     batch_size = 100
     for i in range(0, len(vectors), batch_size):
         batch = vectors[i:i + batch_size]
-        index.upsert(vectors=batch)
+        idx.upsert(vectors=batch)
     
     processing_time = (datetime.now() - start_time).total_seconds()
     
@@ -438,11 +437,12 @@ async def search_web(query: str, doc_context: List[Dict] = None) -> List[Dict]:
         logger.error(f"Web search failed: {str(e)}")
         return []
 
-def retrieve_documents(query: str, domain: Optional[str] = None, top_k: int = 5, user_id: Optional[str] = None, include_reports: bool = True) -> List[Dict]:
+def retrieve_documents(query: str, domain: Optional[str], top_k: int = 5, user_id: Optional[str] = None, include_reports: bool = True) -> List[Dict]:
     """Retrieve relevant documents from vector DB with optional user filtering and reports namespace"""
     try:
         # Generate query embedding
-        query_embedding = embedder.encode(query).tolist()
+        model = get_embedder()
+        query_embedding = model.encode(query).tolist()
         
         # Build filter
         filter_dict = {}
@@ -457,8 +457,11 @@ def retrieve_documents(query: str, domain: Optional[str] = None, top_k: int = 5,
         # This helps get chunks from all uploaded documents, not just the most similar one
         retrieval_k = top_k * 2 if top_k < 20 else top_k
         
+        # Get Pinecone index
+        idx = get_pinecone_index()
+        
         # Query default namespace (user documents)
-        results_default = index.query(
+        results_default = idx.query(
             vector=query_embedding,
             top_k=retrieval_k,
             include_metadata=True,
@@ -470,7 +473,7 @@ def retrieve_documents(query: str, domain: Optional[str] = None, top_k: int = 5,
         
         # Also query reports namespace if enabled
         if include_reports:
-            results_reports = index.query(
+            results_reports = idx.query(
                 vector=query_embedding,
                 top_k=retrieval_k // 2,  # Get fewer from reports
                 include_metadata=True,
@@ -931,7 +934,8 @@ async def batch_upload(
 async def get_statistics():
     """Get vector database statistics"""
     try:
-        stats = index.describe_index_stats()
+        idx = get_pinecone_index()
+        stats = idx.describe_index_stats()
         return {
             "total_vectors": stats.get("total_vector_count", 0),
             "dimension": stats.get("dimension", 0),
@@ -1058,9 +1062,29 @@ async def query_with_dual_answers(request: QueryRequest):
         logger.error(f"Dual query failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():
+    """Root endpoint for Render - responds instantly"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse({
+        "name": "RAG Backend API",
+        "version": "1.0.0",
+        "status": "running",
+        "message": "Backend is live ✅",
+        "endpoints": {
+            "health": "GET /health - Health check",
+            "ready": "GET /ready - Readiness check",
+            "upload": "POST /upload - Upload single document",
+            "batch_upload": "POST /batch-upload - Upload multiple documents",
+            "query": "POST /query - Query with RAG + web search",
+            "stats": "GET /stats - Database statistics",
+            "domains": "GET /domains - List available domains"
+        }
+    })
+
 @app.get("/health")
-async def health_check():
-    """Health check endpoint - responds immediately"""
+async def health():
+    """Health check for Render"""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
@@ -1073,27 +1097,10 @@ async def readiness_check():
     """Readiness check - always returns 200 OK"""
     return {"ready": True, "timestamp": datetime.now().isoformat()}
 
-@app.get("/")
-@app.head("/")
-async def root():
-    """API information - supports both GET and HEAD requests"""
-    return {
-        "name": "RAG Backend API",
-        "version": "1.0.0",
-        "status": "running",
-        "models_loaded": embedder is not None,
-        "endpoints": {
-            "health": "GET /health - Health check",
-            "upload": "POST /upload - Upload single document",
-            "batch_upload": "POST /batch-upload - Upload multiple documents",
-            "query": "POST /query - Query with RAG + web search",
-            "stats": "GET /stats - Database statistics",
-            "domains": "GET /domains - List available domains"
-        }
-    }
-
 # ==================== RUN ====================
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", 8000))
+    logger.info(f"🚀 Starting server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
