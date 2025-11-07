@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, F
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import PyPDF2
 import docx
 import httpx

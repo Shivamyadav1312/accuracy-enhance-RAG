@@ -12,6 +12,7 @@ requests>=2.31.0
 together>=0.2.0
 sentence-transformers>=2.2.2
 langchain>=0.1.0
+langchain-text-splitters>=0.0.1
 
 # Vector Database
 pinecone-client>=3.0.0
