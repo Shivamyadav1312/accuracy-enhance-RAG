@@ -958,9 +958,11 @@ async def get_user_documents(user_id: str):
     try:
         # Query Pinecone to get unique documents for this user
         # This is a simplified approach - in production, use a separate metadata store
-        query_embedding = embedder.encode("document").tolist()
+        model = get_embedder()  # Lazy load embedder
+        query_embedding = model.encode("document").tolist()
         
-        results = index.query(
+        idx = get_pinecone_index()  # Lazy load Pinecone index
+        results = idx.query(
             vector=query_embedding,
             top_k=100,
             include_metadata=True,
