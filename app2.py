@@ -71,14 +71,11 @@ text_splitter = None
 pc = None
 index = None
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifespan context manager - loads models after server starts"""
+def initialize_models():
+    """Initialize models in background thread"""
     global embedder, text_splitter, pc, index
-    
-    # Startup: Initialize models in background
-    logger.info("Server started, initializing models in background...")
     try:
+        logger.info("Loading models...")
         embedder = SentenceTransformer(config.EMBEDDING_MODEL)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=config.CHUNK_SIZE,
@@ -90,10 +87,20 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Models initialized successfully!")
     except Exception as e:
         logger.error(f"❌ Model initialization failed: {str(e)}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager - starts model loading in background"""
+    import threading
+    
+    # Start model loading in background thread (non-blocking)
+    logger.info("Server starting, will load models in background...")
+    thread = threading.Thread(target=initialize_models, daemon=True)
+    thread.start()
     
     yield
     
-    # Shutdown: cleanup if needed
+    # Shutdown
     logger.info("Shutting down...")
 
 app = FastAPI(title="RAG Backend API", version="1.0.0", lifespan=lifespan)
