@@ -87,10 +87,18 @@ def initialize_models():
         )
         logger.info("✅ Text splitter initialized")
         
-        logger.info("🔄 Connecting to Pinecone...")
-        pc = Pinecone(api_key=config.PINECONE_API_KEY)
-        index = pc.Index("documents-index")
-        logger.info("✅ Pinecone connected")
+        # Only initialize Pinecone if API key is available
+        if config.PINECONE_API_KEY:
+            logger.info("🔄 Connecting to Pinecone...")
+            try:
+                pc = Pinecone(api_key=config.PINECONE_API_KEY)
+                index = pc.Index("documents-index")
+                logger.info("✅ Pinecone connected")
+            except Exception as e:
+                logger.error(f"⚠️ Pinecone connection failed: {str(e)}")
+                logger.info("Server will run without Pinecone (upload/query features disabled)")
+        else:
+            logger.warning("⚠️ PINECONE_API_KEY not set - upload/query features disabled")
         
         logger.info("🎉 All models initialized successfully!")
     except Exception as e:
@@ -1056,8 +1064,14 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "models_loaded": embedder is not None
+        "models_loaded": embedder is not None,
+        "pinecone_connected": index is not None
     }
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check - always returns 200 OK"""
+    return {"ready": True, "timestamp": datetime.now().isoformat()}
 
 @app.get("/")
 @app.head("/")
