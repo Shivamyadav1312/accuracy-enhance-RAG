@@ -22,10 +22,11 @@ from pdf2image import convert_from_bytes
 from pinecone import Pinecone
 import os
 
-# Add Poppler to PATH for PDF OCR support
+# Add Poppler to PATH for PDF OCR support (Windows only)
 poppler_path = r"C:\poppler\poppler-24.08.0\Library\bin"
 if os.path.exists(poppler_path):
     os.environ["PATH"] = poppler_path + os.pathsep + os.environ.get("PATH", "")
+    print(f"✅ Poppler added to PATH: {poppler_path}")
 import logging
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -1118,4 +1119,15 @@ if __name__ == "__main__":
     import uvicorn
     # Use PORT from environment variable (Render sets this), default to 8000 for local
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    print(f"🚀 Starting server on port {port}...")
+    print(f"📍 Host: 0.0.0.0")
+    print(f"🔧 Environment: {'Render' if os.environ.get('RENDER') else 'Local'}")
+    
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=port,
+        log_level="info",
+        access_log=True
+    )
