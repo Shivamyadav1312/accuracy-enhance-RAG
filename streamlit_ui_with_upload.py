@@ -8,6 +8,7 @@ import requests
 import json
 from datetime import datetime
 import hashlib
+import os
 
 # Page config
 st.set_page_config(
@@ -17,8 +18,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# API Configuration
-API_BASE_URL = "https://accuracy-enhance-rag-tkr3.onrender.com"
+# API Configuration - Use environment variable or default to local
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # Custom CSS (same as before)
 st.markdown("""
@@ -273,6 +274,20 @@ def get_user_documents(user_id):
     except:
         return []
 
+def get_all_documents():
+    """Get all documents (for when user has no specific docs)"""
+    try:
+        response = requests.get(
+            f"{API_BASE_URL}/stats",
+            timeout=10
+        )
+        if response.status_code == 200:
+            stats = response.json()
+            return stats.get('total_vectors', 0)
+        return 0
+    except:
+        return 0
+
 def main():
     # Generate user ID
     user_id = generate_user_id()
@@ -312,7 +327,8 @@ def main():
             if custom_user_id:
                 user_id = custom_user_id
         
-        st.info(f"🆔 Current ID: `{user_id[:16]}...`")
+        st.info(f"🆔 Current ID: `{user_id[:12]}`")
+        st.caption("💡 Use 'Custom ID' to access docs from another session")
         st.markdown("---")
         
         # Document Upload Section
@@ -347,6 +363,14 @@ def main():
                                 st.error(f"❌ {error}")
                             else:
                                 st.success(f"✅ Uploaded: {uploaded_files[0].name}")
+                                # Track in session state
+                                if 'uploaded_docs' not in st.session_state:
+                                    st.session_state.uploaded_docs = []
+                                st.session_state.uploaded_docs.append({
+                                    'filename': uploaded_files[0].name,
+                                    'chunks': result.get('chunks_created', 0),
+                                    'timestamp': result.get('timestamp', 'N/A')
+                                })
                                 st.json(result)
                                 st.rerun()
             
@@ -360,6 +384,17 @@ def main():
                             else:
                                 st.success(f"✅ Uploaded {result.get('successful', 0)} of {result.get('total', 0)} files")
                                 st.info(f"Total chunks created: {result.get('total_chunks', 0)}")
+                                
+                                # Track in session state
+                                if 'uploaded_docs' not in st.session_state:
+                                    st.session_state.uploaded_docs = []
+                                for res in result.get('results', []):
+                                    if res['status'] == 'success':
+                                        st.session_state.uploaded_docs.append({
+                                            'filename': res['file_name'],
+                                            'chunks': res.get('chunks_created', 0),
+                                            'timestamp': res.get('timestamp', 'N/A')
+                                        })
                                 
                                 # Show detailed results
                                 with st.expander("Upload details", expanded=True):
@@ -375,16 +410,33 @@ def main():
         
         # Show user's documents
         st.subheader("📚 Your Documents")
-        user_docs = get_user_documents(user_id)
+        
+        # Get docs from API and combine with session state
+        api_docs = get_user_documents(user_id)
+        session_docs = st.session_state.get('uploaded_docs', [])
+        
+        # Combine and deduplicate
+        all_docs = {}
+        for doc in api_docs + session_docs:
+            filename = doc.get('filename') or doc.get('file_name', 'Unknown')
+            if filename not in all_docs:
+                all_docs[filename] = doc
+        
+        user_docs = list(all_docs.values())
         
         if user_docs:
+            st.success(f"✅ {len(user_docs)} document(s) found")
             for doc in user_docs:
+                filename = doc.get('filename') or doc.get('file_name', 'Unknown')
+                chunks = doc.get('chunks', 0)
+                timestamp = doc.get('timestamp', 'N/A')[:10] if doc.get('timestamp') else 'Just now'
                 st.markdown(f'<div class="document-card">', unsafe_allow_html=True)
-                st.markdown(f"**{doc.get('filename', 'Unknown')}**")
-                st.caption(f"Chunks: {doc.get('chunks', 0)} | Uploaded: {doc.get('timestamp', 'N/A')}")
+                st.markdown(f"**{filename}**")
+                st.caption(f"Chunks: {chunks} | Uploaded: {timestamp}")
                 st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("No documents uploaded yet")
+            st.info("📭 No documents uploaded yet")
+            st.caption("Upload documents to get personalized answers from your files!")
         
         st.markdown("---")
         
@@ -399,7 +451,11 @@ def main():
         )
         
         if dual_answer_mode:
-            st.success("✅ Dual Answer Mode: You'll get both document-specific AND generalized answers!")
+            if len(user_docs) > 0:
+                st.success("✅ Dual Answer Mode: You'll get both document-specific AND generalized answers!")
+            else:
+                st.warning("⚠️ Dual mode disabled: No documents uploaded yet. Upload documents to enable dual answers.")
+                dual_answer_mode = False
         
         # Search scope - flexible selection
         search_scope = st.radio(
@@ -547,8 +603,15 @@ def main():
             query_user_id = user_id
             scope_label = "Your Documents"
         elif search_scope == "My Documents + General Knowledge":
-            query_user_id = None  # Search all
-            scope_label = "All Sources"
+            # Check if user has uploaded documents in this session
+            user_doc_count = len(user_docs)
+            if user_doc_count > 0:
+                query_user_id = user_id  # Search user's documents + general
+                scope_label = "Your Docs + General"
+            else:
+                # User has no docs - search ALL documents including other users' uploads
+                query_user_id = None
+                scope_label = "All Documents"
         else:  # General Knowledge Only
             query_user_id = "general"  # Special flag for general only
             scope_label = "General Knowledge"
@@ -558,10 +621,17 @@ def main():
         search_config = f"{scope_label} | {top_k} sources | {'Web: ON' if include_web else 'Web: OFF'} | {reports_status} | {llm_provider.split()[0]}"
         
         with st.spinner(f"🔄 Searching: {search_config}..."):
-            # Use dual answer API if mode is enabled
-            if dual_answer_mode:
-                result, error = query_dual_api(query_input, include_web, top_k, user_id, selected_provider, include_reports, selected_domain, detect_domain)
+            # Use dual answer API if mode is enabled AND user has documents
+            # Dual mode needs user docs to show the separation
+            if dual_answer_mode and len(user_docs) > 0:
+                # Only use dual mode if user has uploaded documents
+                if search_scope == "General Knowledge Only":
+                    dual_user_id = None
+                else:
+                    dual_user_id = user_id
+                result, error = query_dual_api(query_input, include_web, top_k, dual_user_id, selected_provider, include_reports, selected_domain, detect_domain)
             else:
+                # Use regular API for all other cases
                 result, error = query_api(query_input, include_web, top_k, query_user_id, selected_provider, include_reports, selected_domain, detect_domain)
             
             if error:
@@ -632,7 +702,12 @@ def main():
                                         st.markdown(f"**{i}. {src.get('source', 'Unknown')}** (score: {src.get('score', 0):.3f})")
                                         st.caption(src.get('text', '')[:150] + "...")
                             else:
-                                st.info("📭 No documents uploaded yet")
+                                if len(user_docs) == 0:
+                                    st.info("📭 No documents uploaded yet")
+                                    st.caption("Upload documents in the sidebar to see answers from your files!")
+                                else:
+                                    st.info("📭 No relevant info in your documents")
+                                    st.caption("Your documents don't contain information about this query.")
                         
                         with col_right:
                             st.markdown('<div class="answer-header gen-header">🌍 General Knowledge</div>', unsafe_allow_html=True)

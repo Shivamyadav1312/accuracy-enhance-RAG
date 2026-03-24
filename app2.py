@@ -21,6 +21,11 @@ import pytesseract
 from pdf2image import convert_from_bytes
 from pinecone import Pinecone
 import os
+
+# Add Poppler to PATH for PDF OCR support
+poppler_path = r"C:\poppler\poppler-24.08.0\Library\bin"
+if os.path.exists(poppler_path):
+    os.environ["PATH"] = poppler_path + os.pathsep + os.environ.get("PATH", "")
 import logging
 from typing import Optional, List, Dict
 from datetime import datetime
@@ -721,6 +726,13 @@ async def generate_answer(query: str, doc_results: List[Dict], web_results: Opti
         )
     
     prompt = "".join(context_parts)
+    
+    # Limit prompt size to avoid API errors (Together AI has ~128k token limit)
+    # Rough estimate: 1 token ≈ 4 characters
+    max_chars = 120000  # Leave room for response
+    if len(prompt) > max_chars:
+        logger.warning(f"Prompt too long ({len(prompt)} chars), truncating to {max_chars}")
+        prompt = prompt[:max_chars] + "\n\n[Content truncated due to length]\n\nANSWER:"
     
     # Call Together AI or Groq API based on llm_provider parameter
     try:
