@@ -64,7 +64,7 @@ class Config:
     
     # Query settings
     DEFAULT_TOP_K = 5
-    MAX_TOKENS = 3072  # Increased for comprehensive analytical responses
+    MAX_TOKENS = 2048  # Reduced for Render free tier (512MB RAM)
 
 config = Config()
 
@@ -116,6 +116,7 @@ def get_pinecone_index():
 async def lifespan(app: FastAPI):
     """Lifespan context manager - server starts immediately"""
     logger.info("✅ Backend fully started and ready to serve requests.")
+    logger.info(f"📝 MAX_TOKENS: {config.MAX_TOKENS} (optimized for Render free tier)")
     yield
     logger.info("Shutting down...")
 
