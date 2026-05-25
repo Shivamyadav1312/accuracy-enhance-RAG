@@ -1115,8 +1115,10 @@ async def readiness_check():
 
 # ==================== RUN ====================
 
+# Run with: python app2.py OR uvicorn app2:app --host 0.0.0.0 --port $PORT
 if __name__ == "__main__":
     import uvicorn
+    from contextlib import asynccontextmanager
     from fastapi import FastAPI
     
     # Use PORT from environment variable (Render sets this), default to 8000 for local
@@ -1126,15 +1128,14 @@ if __name__ == "__main__":
     print(f" Host: 0.0.0.0")
     print(f" Environment: {'Render' if os.environ.get('RENDER') else 'Local'}")
     
-    # Add startup event to log immediately
-    @app.on_event("startup")
-    async def startup_event():
-        print(f" FastAPI server is now listening on 0.0.0.0:{port}")
+    # Remove the lifespan from app and use a simple one
+    app.router.lifespan_context = None
     
     uvicorn.run(
-        app, 
+        "app2:app", 
         host="0.0.0.0", 
         port=port,
         log_level="info",
-        access_log=True
+        access_log=True,
+        factory=False
     )
