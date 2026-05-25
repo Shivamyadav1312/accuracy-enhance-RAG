@@ -1117,12 +1117,19 @@ async def readiness_check():
 
 if __name__ == "__main__":
     import uvicorn
+    from fastapi import FastAPI
+    
     # Use PORT from environment variable (Render sets this), default to 8000 for local
     port = int(os.environ.get("PORT", 8000))
     
-    print(f"🚀 Starting server on port {port}...")
-    print(f"📍 Host: 0.0.0.0")
-    print(f"🔧 Environment: {'Render' if os.environ.get('RENDER') else 'Local'}")
+    print(f" Starting server on port {port}...")
+    print(f" Host: 0.0.0.0")
+    print(f" Environment: {'Render' if os.environ.get('RENDER') else 'Local'}")
+    
+    # Add startup event to log immediately
+    @app.on_event("startup")
+    async def startup_event():
+        print(f" FastAPI server is now listening on 0.0.0.0:{port}")
     
     uvicorn.run(
         app, 
